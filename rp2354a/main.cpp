@@ -1,6 +1,6 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-#include "board/hardware_config.h"
+#include "hardware_config.h"
 
 #include "board/k210_boot.hpp"
 

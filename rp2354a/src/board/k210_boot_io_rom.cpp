@@ -2,7 +2,7 @@
 
 #include "boot/boot.hpp"
 #include "board/k210_boot_io.hpp"
-#include "board/hardware_config.h"
+#include "hardware_config.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
