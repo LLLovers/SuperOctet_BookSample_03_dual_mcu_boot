@@ -1,0 +1,60 @@
+cmake_minimum_required(VERSION 3.25)
+if(NOT PICO_SDK_PATH AND DEFINED ENV{PICO_SDK_PATH})
+    set(PICO_SDK_PATH "$ENV{PICO_SDK_PATH}")
+endif()
+if(NOT EXISTS "${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+    message(FATAL_ERROR "Set PICO_SDK_PATH to Pico SDK 2.3.1")
+endif()
+set(PICO_BOARD aether_evt_a CACHE STRING "RP2354A board")
+set(PICO_PLATFORM rp2350-arm-s CACHE STRING "Cortex-M33 secure platform")
+if(NOT PICO_BOARD STREQUAL "aether_evt_a" OR NOT PICO_PLATFORM STREQUAL "rp2350-arm-s")
+    message(FATAL_ERROR "This sample requires Aether RP2354A / rp2350-arm-s")
+endif()
+set(PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_LIST_DIR}/board")
+include("${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+project(BookBootHost LANGUAGES C CXX ASM)
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+pico_sdk_init()
+if(NOT PICO_SDK_VERSION_STRING VERSION_EQUAL "2.3.1")
+    message(FATAL_ERROR "Pico SDK 2.3.1 is required")
+endif()
+if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_VERSION VERSION_LESS 12)
+    message(FATAL_ERROR "Use Arm GNU GCC 12 or newer")
+endif()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+foreach(image BOOK_LOADER_BIN BOOK_K210_BIN)
+    if(NOT EXISTS "${${image}}")
+        message(FATAL_ERROR "${image} must name a built sample binary")
+    endif()
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${BOOK_LOADER_BIN}" "${BOOK_K210_BIN}")
+file(SIZE "${BOOK_LOADER_BIN}" loader_size)
+file(SIZE "${BOOK_K210_BIN}" image_size)
+if(loader_size EQUAL 0 OR loader_size GREATER 2048 OR image_size EQUAL 0 OR image_size GREATER 6275072)
+    message(FATAL_ERROR "Sample binaries exceed the product loader limits")
+endif()
+set(_rp "${CMAKE_CURRENT_LIST_DIR}")
+set(_embedded "${CMAKE_CURRENT_BINARY_DIR}/embedded_images.S")
+set(_manifest "${CMAKE_CURRENT_BINARY_DIR}/embedded_images.json")
+add_custom_command(OUTPUT "${_embedded}" "${_manifest}"
+    COMMAND "${Python3_EXECUTABLE}" "${_rp}/tools/embed_images.py"
+        --loader "${BOOK_LOADER_BIN}" --helios "${BOOK_K210_BIN}"
+        --assembly "${_embedded}" --manifest "${_manifest}" --build-id book-blink
+    DEPENDS "${BOOK_LOADER_BIN}" "${BOOK_K210_BIN}" "${_rp}/tools/embed_images.py"
+    VERBATIM)
+add_executable(dual_mcu_boot main.cpp "${_embedded}"
+    "${_rp}/src/board/k210_boot.cpp"
+    "${_rp}/src/board/k210_boot_io.cpp"
+    "${_rp}/src/board/k210_boot_io_rom.cpp"
+    "${_rp}/src/platform/uni_crc.cpp")
+target_include_directories(dual_mcu_boot PRIVATE "${_rp}/include")
+target_compile_definitions(dual_mcu_boot PRIVATE
+    PICO_STACK_SIZE=0x1000 PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
+target_compile_options(dual_mcu_boot PRIVATE -Os -g3 -Wall -Wextra)
+target_link_libraries(dual_mcu_boot PRIVATE pico_stdlib pico_multicore
+    hardware_uart hardware_spi hardware_dma)
+pico_enable_stdio_usb(dual_mcu_boot 0)
+pico_enable_stdio_uart(dual_mcu_boot 0)
+pico_add_extra_outputs(dual_mcu_boot)

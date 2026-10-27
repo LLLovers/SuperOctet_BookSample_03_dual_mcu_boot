@@ -1,0 +1,52 @@
+cmake_minimum_required(VERSION 3.25)
+if(NOT K210_SDK_PATH)
+    if(DEFINED ENV{K210_SDK_PATH})
+        set(K210_SDK_PATH "$ENV{K210_SDK_PATH}")
+    else()
+        set(K210_SDK_PATH "$ENV{HOME}/k210-sdk")
+    endif()
+endif()
+include("${K210_SDK_PATH}/external/k210_sdk_import.cmake")
+project(BookK210Blink LANGUAGES C CXX ASM)
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_VERSION VERSION_LESS 12)
+    message(FATAL_ERROR "Use RISC-V GCC 12 or newer with rv64imafc/lp64f multilib")
+endif()
+find_package(Git REQUIRED)
+# sdk-lock.json revision 24269b855bc2fbd4c344b370833c4eb372a6898a.
+# Equivalent commits must have the identical tree and no tracked modifications.
+execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${K210_SDK_PATH}" rev-parse "HEAD^{tree}"
+    OUTPUT_VARIABLE sdk_tree OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${K210_SDK_PATH}" diff --quiet HEAD --
+    RESULT_VARIABLE sdk_dirty)
+if(NOT sdk_tree STREQUAL "4ef62b8901388c9fd220f6bf0a3182b9efcb7a73" OR NOT sdk_dirty EQUAL 0)
+    message(FATAL_ERROR "Use LLLovers/kendryte-standalone-sdk at 24269b855bc2fbd4c344b370833c4eb372a6898a")
+endif()
+set(K210_ENABLE_DIAGNOSTIC_LOGGING OFF CACHE BOOL "SDK logging" FORCE)
+set(K210_ENABLE_FAULT_HOOK OFF CACHE BOOL "SDK fault hook" FORCE)
+k210_sdk_init()
+# Explicit application/SDK profile; the external SDK supplies its C runtime.
+target_compile_options(k210_sdk_config INTERFACE
+    -march=rv64imafc_zifencei -mabi=lp64f -mcmodel=medany
+    $<$<COMPILE_LANGUAGE:C,CXX>:-Ofast;-fno-allow-store-data-races>)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${K210_SDK_PATH}/lds/kendryte.ld")
+file(READ "${K210_SDK_PATH}/lds/kendryte.ld" linker)
+if(NOT linker MATCHES "\\(6 \\* 1024 \\* 1024\\)")
+    message(FATAL_ERROR "SDK RAM layout changed; check the 16 KiB loader reservation")
+endif()
+string(REPLACE "(6 * 1024 * 1024)" "0x5FC000" linker "${linker}")
+string(APPEND linker "\nASSERT(_heap_start <= _ram_end, \"K210 stacks overlap loader\")\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/blink.ld" "${linker}")
+add_executable(k210_dual_blink main.cpp)
+target_include_directories(k210_dual_blink PRIVATE include)
+target_link_libraries(k210_dual_blink PRIVATE k210_stdlib k210_hardware_gpiohs)
+target_compile_options(k210_dual_blink PRIVATE
+    -march=rv64imafc_zifencei -mabi=lp64f -mcmodel=medany
+    -Ofast -fno-allow-store-data-races -fno-exceptions -fno-rtti -g3 -Wall -Wextra)
+target_link_options(k210_dual_blink PRIVATE -march=rv64imafc -mabi=lp64f -mcmodel=medany)
+set_target_properties(k210_dual_blink PROPERTIES SUFFIX .elf LINKER_LANGUAGE C)
+k210_set_linker_script(k210_dual_blink "${CMAKE_CURRENT_BINARY_DIR}/blink.ld")
+k210_add_extra_outputs(k210_dual_blink)
+add_subdirectory(loader)
