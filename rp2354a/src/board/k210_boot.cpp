@@ -3,10 +3,8 @@
 namespace so {
 namespace {
 constexpr uint32_t STAGE_TIMEOUT_US = 100000;
-constexpr uint32_t IMAGE_TRANSFER_TIMEOUT_US = 500000;
 // Helios waits for DAC clock detection and analog power-up before it can start responding.
 constexpr uint32_t HELIOS_INIT_TIMEOUT_US = 2000000;
-constexpr uint32_t BOOT_READY_TIMEOUT_US = 500000;
 }
 
 Result BootSequence::Start(uint32_t nowUs) {
@@ -23,16 +21,16 @@ Result BootSequence::Start(uint32_t nowUs) {
   return Result::Ok;
 }
 
-uint32_t BootSequence::TimeoutFor(BootState state) const {
+std::optional<uint32_t> BootSequence::TimeoutFor(BootState state) const {
   switch (state) {
-    case BootState::TransferImage:
-      return IMAGE_TRANSFER_TIMEOUT_US;
+    case BootState::AwaitLoaderReady:
+      return STAGE_TIMEOUT_US;
+    case BootState::AwaitLoaderResult:
+      return io.loaderResultTimeoutUs;
     case BootState::AwaitHeliosStart:
       return HELIOS_INIT_TIMEOUT_US;
-    case BootState::AwaitBootReady:
-      return BOOT_READY_TIMEOUT_US;
     default:
-      return STAGE_TIMEOUT_US;
+      return std::nullopt;
   }
 }
 
@@ -54,14 +52,21 @@ Result BootSequence::Fail(BootFault fault, Result result, uint32_t nowUs) {
 
 Result BootSequence::Run(BootAction action, BootState next, BootFault fault, uint32_t nowUs) {
   const auto result = io.perform(io.context, action);
+  if (io.nowUs != nullptr)
+    nowUs = io.nowUs(io.context);
   if (result == Result::Ok) {
     state = next;
     stageSince = nowUs;
     return Result::Ok;
   }
   if (result == Result::Busy) {
-    if (static_cast<uint32_t>(nowUs - stageSince) < TimeoutFor(state))
+    const auto timeout = TimeoutFor(state);
+    if (!timeout || static_cast<uint32_t>(nowUs - stageSince) < *timeout)
       return Result::Busy;
+    ++diagnostics.stageTimeouts;
+    return Fail(BootFault::Timeout, Result::Unavailable, nowUs);
+  }
+  if (result == Result::Timeout) {
     ++diagnostics.stageTimeouts;
     return Fail(BootFault::Timeout, Result::Unavailable, nowUs);
   }
@@ -104,7 +109,7 @@ Result BootSequence::Pump(uint32_t nowUs) {
           Run(BootAction::AwaitBootReady, BootState::Ready, BootFault::BootReady, nowUs);
       if (state == BootState::Ready) {
         fault = BootFault::None;
-        diagnostics.readyUs = static_cast<uint32_t>(nowUs - bootSince);
+        diagnostics.readyUs = static_cast<uint32_t>(stageSince - bootSince);
       }
       return result;
     }

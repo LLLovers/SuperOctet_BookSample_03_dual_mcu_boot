@@ -12,6 +12,7 @@ enum class Result : uint8_t {
   InvalidState,
   CRCMismatch,
   Unavailable,
-  ResourceLimit
+  ResourceLimit,
+  Timeout
 };
 }

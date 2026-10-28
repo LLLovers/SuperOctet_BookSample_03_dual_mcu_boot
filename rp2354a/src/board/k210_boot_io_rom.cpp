@@ -64,6 +64,8 @@ bool UARTWrite(void *, so::Bytes bytes) {
   if (bytes.data == nullptr || bytes.size == 0)
     return false;
   uart_write_blocking(MIDI_UART, bytes.data, bytes.size);
+  // uart_write_blocking only fills the FIFO. Start response deadlines after wire completion.
+  uart_tx_wait_blocking(MIDI_UART);
   return true;
 }
 

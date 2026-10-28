@@ -12,6 +12,7 @@ constexpr uint32_t LOADER_ADDRESS = 0x805fc000;
 constexpr uint8_t NOP = 0xc2, MEMORY_WRITE = 0xc3, MEMORY_BOOT = 0xc5;
 constexpr uint8_t RETURN_OK = 0xe0;
 constexpr uint32_t NOP_RETRY_US = 10'000;
+constexpr uint32_t ROM_RESPONSE_TIMEOUT_US = 100'000;
 constexpr uint8_t SLIP_END = 0xc0, SLIP_ESCAPE = 0xdb;
 constexpr uint8_t SLIP_ESCAPED_END = 0xdc, SLIP_ESCAPED_ESCAPE = 0xdd;
 constexpr uint8_t ROM_DEBUG_FRAME = 0xd1;
@@ -80,6 +81,7 @@ void K210BootTransport::ClearAttempt() {
   responseSize = 0;
   loaderChunkBytes = 0;
   lastNopUs = 0;
+  responseSince = 0;
   commandPending = escapePending = insideFrame = imageTransferred = false;
 }
 
@@ -151,6 +153,8 @@ Result K210BootTransport::Response(uint8_t operation) {
 }
 
 Result K210BootTransport::RomHandshake() {
+  if (port.nowUs == nullptr)
+    return Result::InvalidState;
   if (!commandPending) {
     // Match the ROM greeting used by Kendryte kflash.py: 13 bytes inside SLIP.
     std::array<uint8_t, 5> zeros{};
@@ -158,17 +162,18 @@ Result K210BootTransport::RomHandshake() {
     if (result != Result::Ok)
       return result;
     commandPending = true;
-    if (port.nowUs != nullptr)
-      lastNopUs = port.nowUs(port.context);
+    responseSince = lastNopUs = port.nowUs(port.context);
   }
   if (const auto result = Response(NOP); result != Result::Ok) {
-    if (result == Result::Busy && port.nowUs != nullptr) {
+    if (result == Result::Busy) {
       const uint32_t now = port.nowUs(port.context);
+      if (static_cast<uint32_t>(now - responseSince) >= ROM_RESPONSE_TIMEOUT_US)
+        return Result::Timeout;
       if (now - lastNopUs >= NOP_RETRY_US) {
         std::array<uint8_t, 5> zeros{};
         if (const auto send = Send(NOP, {zeros.data(), zeros.size()}); send != Result::Ok)
           return send;
-        lastNopUs = now;
+        lastNopUs = port.nowUs(port.context);
         responseSize = 0;
         escapePending = insideFrame = false;
       }
@@ -180,10 +185,16 @@ Result K210BootTransport::RomHandshake() {
 }
 
 Result K210BootTransport::UploadLoader() {
+  if (port.nowUs == nullptr)
+    return Result::InvalidState;
   if (loader.data == nullptr || loader.size == 0 || loader.size > 2048)
     return Result::InvalidLength;
   if (commandPending) {
     const auto result = Response(MEMORY_WRITE);
+    if (result == Result::Busy &&
+        static_cast<uint32_t>(port.nowUs(port.context) - responseSince) >=
+            ROM_RESPONSE_TIMEOUT_US)
+      return Result::Timeout;
     if (result != Result::Ok)
       return result;
     loaderOffset += loaderChunkBytes;
@@ -203,6 +214,7 @@ Result K210BootTransport::UploadLoader() {
       result != Result::Ok)
     return result;
   commandPending = true;
+  responseSince = port.nowUs(port.context);
   return Result::Busy;
 }
 

@@ -3,6 +3,7 @@
 #include "base/result.hpp"
 
 #include <cstdint>
+#include <optional>
 
 namespace so {
 
@@ -55,6 +56,9 @@ enum class BootFault : uint8_t {
 struct BootIo {
   void *context = nullptr;
   Result (*perform)(void *, BootAction) = nullptr;
+  // Read after perform(): UART/SPI writes may block past Pump's supplied time.
+  uint32_t (*nowUs)(void *) = nullptr;
+  uint32_t loaderResultTimeoutUs = 100000;
 };
 
 struct BootDiagnostics {
@@ -67,7 +71,8 @@ struct BootDiagnostics {
 };
 
 // Board-independent boot sequencing. ROM electrical framing and SPI DMA live in the adapter.
-// Busy means that stage has not produced its response yet. A second failure is terminal.
+// Busy covers both transfer progress and response waits. Only explicit waits have deadlines;
+// the transport owns the ROM command deadlines. A second failure is terminal.
 class BootSequence {
  public:
   explicit BootSequence(BootIo io) : io(io) {}
@@ -84,7 +89,7 @@ class BootSequence {
  private:
   Result Run(BootAction action, BootState next, BootFault fault, uint32_t nowUs);
   Result Fail(BootFault fault, Result result, uint32_t nowUs);
-  uint32_t TimeoutFor(BootState state) const;
+  std::optional<uint32_t> TimeoutFor(BootState state) const;
 
   BootIo io{};
   BootDiagnostics diagnostics{};
