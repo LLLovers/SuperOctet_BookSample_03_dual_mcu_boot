@@ -3,9 +3,8 @@
 _start:
     csrw mie, zero
     csrci mstatus, 8
-    csrr a0, mhartid
-    bnez a0, .Lsecondary
-    # Only hart 0 uses C code and a stack while receiving the image.
+    # ROM MEMORY_BOOT enters on hart 0 only. Hart 1 waits in ROM until
+    # the application SDK sends its IPI from register_core1().
     .option push
     .option norelax
     la gp, __global_pointer$
@@ -15,14 +14,3 @@ _start:
 1:
     wfi
     j 1b
-
-.Lsecondary:
-    # Hart 0 publishes loader_go only after CRC validation and UART result drain.
-    la t0, loader_go
-2:
-    lw t1, 0(t0)
-    beqz t1, 2b
-    fence rw,rw
-    fence.i
-    li t0, 0x80000000
-    jr t0

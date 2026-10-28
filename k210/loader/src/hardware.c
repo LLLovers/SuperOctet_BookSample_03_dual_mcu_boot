@@ -47,9 +47,6 @@ static volatile uint32_t *const uartTXControl =
 static volatile uint32_t *const uartDivider =
     (volatile uint32_t *)(UARTHS_BASE_ADDR + UARTHS_REG_DIV);
 
-// Kept in a loaded section so hart 1 can never observe stale SRAM from a prior boot.
-volatile uint32_t loader_go __attribute__((section(".loader_state"))) = 0;
-
 static fpioa_io_config_t InputFunction(uint8_t function) {
   return (fpioa_io_config_t){.ch_sel = function, .ie_en = 1, .st = 1};
 }
@@ -170,11 +167,6 @@ void loader_report_result(enum LoaderResult result) {
 __attribute__((noreturn)) void loader_start_image(void) {
   __asm__ volatile(
       "csrci mstatus, 8\n"
-      "fence rw,rw\n"
-      "fence.i" ::
-          : "memory");
-  loader_go = 1;
-  __asm__ volatile(
       "fence rw,rw\n"
       "fence.i" ::
           : "memory");

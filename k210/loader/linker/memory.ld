@@ -9,7 +9,7 @@ SECTIONS {
     .text : { KEEP(*(.text.start)) *(.text .text.*) *(.rodata .rodata.*) } > loader :text
     .data : ALIGN(8) {
         PROVIDE(__global_pointer$ = . + 0x800);
-        *(.loader_state .data .data.* .sdata .sdata.*)
+        *(.data .data.* .sdata .sdata.*)
     } > loader :data
     __loader_binary_end = .;
     .bss (NOLOAD) : ALIGN(8) { *(.bss .bss.* .sbss .sbss.* COMMON) } > loader :data
